@@ -1,0 +1,28 @@
+{
+  "name": "travel-perk-cleanup",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node --enable-source-maps ./dist/bundle.js",
+    "build": "esbuild src/index.ts --bundle --sourcemap --platform=node --target=node16 --outfile=dist/bundle.js",
+    "dev:start": "node --watch --enable-source-maps ./dist/bundle.js",
+    "dev:build": "yarn build --watch",
+    "dev": "concurrently 'npm:dev:build' 'npm:dev:start'",
+    "type-check": "tsc"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.6",
+    "deep-equal": "^2.0.5",
+    "ical": "^0.8.0",
+    "ical-generator": "^3.6.0",
+    "parse-address-string": "^0.0.3"
+  },
+  "devDependencies": {
+    "@types/deep-equal": "^1.0.1",
+    "@types/ical": "^0.8.0",
+    "@types/node": "^18.11.4",
+    "concurrently": "^7.5.0",
+    "esbuild": "^0.15.12"
+  }
+}
