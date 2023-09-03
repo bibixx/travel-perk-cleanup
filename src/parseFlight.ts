@@ -1,9 +1,10 @@
 import type { CalendarComponent } from "ical";
+import { findAndMap, findMapValidate } from "./utils";
 
 export interface FlightDetails {
   flightNumber: string;
   duration: string;
-  seat: string;
+  seat: string | undefined;
   reservationNumber: string;
   from: {
     city: string;
@@ -13,71 +14,54 @@ export interface FlightDetails {
     city: string;
     code: string;
   };
-}
-
-function findAndMap<T, U>(data: T[], predicate: (element: T, index: number) => U | null | undefined): U | undefined {
-  for (let i = 0; i < data.length; i++) {
-    const el = data[i];
-    const predicateValue = predicate(el, i);
-
-    if (predicateValue !== null) {
-      return predicateValue;
-    }
-  }
-
-  return undefined;
-}
-
-function checkIfDefined<T>(data: T | undefined): asserts data is T {
-  if (data === undefined) {
-    throw new Error("Flight data not complete");
-  }
+  url: string;
 }
 
 const getFlightNumber = (line: string) => {
-  if (!line.includes("operated by")) {
+  if (!line.includes("Flight Number")) {
     return null;
   }
 
-  const parts = line.split("-");
-  return parts.at(-1)?.trim();
+  const parts = line.split(": ");
+  return parts.at(-1)?.trim() ?? null;
 };
 
 const getDuration = (line: string) => {
-  if (!line.startsWith("DURATION")) {
+  if (!line.startsWith("Flight Duration")) {
     return null;
   }
 
-  return line.substring("DURATION: ".length);
+  const parts = line.split(": ");
+  return parts.at(-1)?.trim() ?? null;
 };
 
-const getSeat = (line: string) => {
-  const searchString = "Seat: ";
-  if (!line.includes(searchString)) {
-    return null;
-  }
-
-  return line.substring(line.indexOf(searchString) + searchString.length);
+const getSeat = () => {
+  return undefined;
 };
 
 const getReservationNumber = (line: string) => {
-  const searchString = "Reservation number: ";
+  const searchString = "Booking Reference";
   if (!line.includes(searchString)) {
     return null;
   }
 
-  return line.substring(line.indexOf(searchString) + searchString.length);
+  const parts = line.split(": ");
+  return parts.at(-1)?.trim() ?? null;
 };
 
-const getTo = (line: string, index: number): FlightDetails["to"] | null => {
-  if (index > 0) {
+const getTo = (line: string, index: number, allLines: string[]): FlightDetails["to"] | null => {
+  const nextLine = allLines[index + 1];
+  if (nextLine === undefined) {
     return null;
   }
 
-  const [, to] = line.split(" - ");
-  const codeStart = to.lastIndexOf(" ");
-  const city = to.substring(0, codeStart);
-  const code = to.substring(codeStart + 1);
+  if (!line.startsWith("Arrival")) {
+    return null;
+  }
+
+  const codeStart = nextLine.lastIndexOf(" (");
+  const city = nextLine.substring(0, codeStart).trim();
+  const code = nextLine.substring(codeStart + 2, nextLine.length - 1);
 
   return {
     city,
@@ -85,20 +69,38 @@ const getTo = (line: string, index: number): FlightDetails["to"] | null => {
   };
 };
 
-const getFrom = (line: string, index: number): FlightDetails["from"] | null => {
-  if (index > 0) {
+const getFrom = (line: string, index: number, allLines: string[]): FlightDetails["from"] | null => {
+  const nextLine = allLines[index + 1];
+  if (nextLine === undefined) {
     return null;
   }
 
-  const [from] = line.split(" - ");
-  const codeStart = from.lastIndexOf(" ");
-  const city = from.substring(0, codeStart);
-  const code = from.substring(codeStart + 1);
+  if (!line.startsWith("Departure")) {
+    return null;
+  }
+
+  const codeStart = nextLine.lastIndexOf(" (");
+  const city = nextLine.substring(0, codeStart).trim();
+  const code = nextLine.substring(codeStart + 2, nextLine.length - 1);
 
   return {
     city,
     code,
   };
+};
+
+const getUrl = (line: string): string | null => {
+  if (!line.includes("View full booking details here")) {
+    return null;
+  }
+
+  const result = line.match(/href="(.+?)"/);
+
+  if (result === null) {
+    return null;
+  }
+
+  return result[1] ?? null;
 };
 
 export const parseFlight = (event: CalendarComponent): FlightDetails => {
@@ -107,19 +109,13 @@ export const parseFlight = (event: CalendarComponent): FlightDetails => {
   }
 
   const lines = event.description.split("\n");
-  const flightNumber = findAndMap(lines, getFlightNumber);
-  const duration = findAndMap(lines, getDuration);
+  const flightNumber = findMapValidate(lines, getFlightNumber);
+  const duration = findMapValidate(lines, getDuration);
+  const reservationNumber = findMapValidate(lines, getReservationNumber);
+  const from = findMapValidate(lines, getFrom);
+  const to = findMapValidate(lines, getTo);
+  const url = findMapValidate(lines, getUrl);
   const seat = findAndMap(lines, getSeat);
-  const reservationNumber = findAndMap(lines, getReservationNumber);
-  const from = findAndMap(lines, getFrom);
-  const to = findAndMap(lines, getTo);
 
-  checkIfDefined(flightNumber);
-  checkIfDefined(duration);
-  checkIfDefined(seat);
-  checkIfDefined(reservationNumber);
-  checkIfDefined(from);
-  checkIfDefined(to);
-
-  return { flightNumber, duration, seat, reservationNumber, from, to };
+  return { flightNumber, duration, reservationNumber, seat, from, to, url };
 };

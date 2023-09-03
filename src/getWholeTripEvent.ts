@@ -1,5 +1,7 @@
+import dayjs from "dayjs";
 import deepEqual from "deep-equal";
 import { ICalEventData } from "ical-generator";
+import { parseAddress } from "./parseAddress";
 
 const getMinIndex = (events: ICalEventData[]) => {
   if (events.length === 0) {
@@ -52,23 +54,70 @@ const areAllStaySame = (events: ICalEventData[]) => {
   return events.every((e) => deepEqual(firstLocation, e.location));
 };
 
-export const getWholeTripEvent = (
-  tripName: string,
+const cityCountryMap: Record<string, string | undefined> = {
+  Budapest: "🇭🇺",
+};
+const getLocationAddress = (location: ICalEventData["location"]) => {
+  if (location === null || location === undefined) {
+    return null;
+  }
+
+  if (typeof location === "string") {
+    return location;
+  }
+
+  return location.address;
+};
+const getTripName = async (event: ICalEventData | undefined) => {
+  let city = "Trip";
+
+  if (event === undefined) {
+    return { tripName: city, calendarName: city };
+  }
+
+  const locationAddress = getLocationAddress(event.location);
+  if (locationAddress) {
+    const address = await parseAddress(locationAddress);
+
+    if (address.city !== null) {
+      city = address.city;
+    } else {
+      const cities = Object.keys(cityCountryMap);
+      const foundCity = cities.find((city) => locationAddress.includes(city));
+
+      city = foundCity ?? city;
+    }
+  }
+
+  const start = dayjs(event.start?.toString());
+  const end = dayjs(event.end?.toString());
+  const country = city ? cityCountryMap[city] : undefined;
+
+  const nameDatePart = `(${start.format("DD.MM.YYYY")} – ${end.subtract(1, "day").format("DD.MM.YYYY")})`;
+  const locationPart = country ? `${city} ${country}` : city ?? "";
+  const tripName = `${locationPart} ${nameDatePart}`;
+
+  return { tripName, calendarName: locationPart };
+};
+
+export const getWholeTripEvent = async (
   flightEvents: ICalEventData[],
   stayEvents: ICalEventData[]
-): {
+): Promise<{
   event: ICalEventData;
   isStayOverride: boolean;
-} => {
+  calendarName: string;
+}> => {
+  const { tripName, calendarName } = await getTripName(stayEvents[0]);
   const events = [...stayEvents, ...flightEvents];
 
   const startIndex = getMinIndex(events);
   const endIndex = getMaxIndex(events);
 
-  const startDate = events[startIndex]?.start as Date | undefined;
-  const endDate = events[endIndex]?.end as Date | undefined;
+  const startDate = dayjs(events[startIndex]?.start as Date | undefined).startOf("day");
+  const endDate = dayjs(events[endIndex]?.end as Date | undefined).endOf("day");
 
-  if (startDate === undefined || endDate === undefined) {
+  if (!startDate.isValid() || !endDate.isValid()) {
     throw new Error("Invalid whole trip event range dates");
   }
 
@@ -76,9 +125,10 @@ export const getWholeTripEvent = (
   if (areAllStaySame(stayEvents) && firstStayEvent !== undefined) {
     return {
       isStayOverride: true,
+      calendarName,
       event: {
-        start: startDate,
-        end: endDate,
+        start: startDate.toDate(),
+        end: endDate.toDate(),
         summary: tripName,
         allDay: true,
         location: firstStayEvent.location,
@@ -89,9 +139,10 @@ export const getWholeTripEvent = (
 
   return {
     isStayOverride: false,
+    calendarName,
     event: {
-      start: startDate,
-      end: endDate,
+      start: startDate.toDate(),
+      end: endDate.toDate(),
       allDay: true,
       summary: tripName,
     },

@@ -4,14 +4,12 @@ import dayjs from "dayjs";
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseAddress } from "./parseAddress";
 import { FlightDetails, parseFlight } from "./parseFlight";
-import { parseStay } from "./parseStay";
+import { parseStay, StayDetails } from "./parseStay";
 import { getWholeTripEvent } from "./getWholeTripEvent";
 
-const cityCountryMap: Record<string, string | undefined> = {
-  Budapest: "🇭🇺",
-};
+process.env.TZ = "Etc/Universal";
+
 const airportCountryMap: Record<string, string | undefined> = {
   BUD: "🇭🇺",
   WAW: "🇵🇱",
@@ -71,17 +69,27 @@ const getFlightDescription = (flight: FlightDetails): string => {
   return [
     `Flight number: ${flight.flightNumber}`,
     `Duration: ${flight.duration}`,
-    `Seat: ${flight.seat}`,
+    `Seat: ${flight.seat ?? "N/A"}`,
     `Reservation number: ${flight.reservationNumber}`,
   ].join("\n");
+};
+
+const getStayDescription = (stay: StayDetails): string => {
+  const checkIn = stay.checkIn ? dayjs(stay.checkIn) : null;
+  const checkOut = stay.checkOut ? dayjs(stay.checkOut) : null;
+  return [
+    checkIn != null && `Check In: ${checkIn.format("DD.MM.YYYY H:mm:ss")}`,
+    checkOut != null && `Check Out: ${checkOut.format("DD.MM.YYYY H:mm:ss")}`,
+    `Booking Reference: ${stay.bookingReference ?? "N/A"}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 };
 
 (async () => {
   const dataPath = join(__dirname, "..", "data", "travelperk-trip.ics");
   const data = ical.parseICS(await readFile(dataPath, "utf-8"));
 
-  let calendarName = "Trip";
-  let tripName = "Trip";
   const flightEvents: ICalEventData[] = [];
   const stayEvents: ICalEventData[] = [];
 
@@ -93,29 +101,7 @@ const getFlightDescription = (flight: FlightDetails): string => {
         continue;
       }
 
-      if (event.description === undefined) {
-        let city = "Trip";
-
-        if (event.location) {
-          const address = await parseAddress(event.location);
-          city = address.city ?? city;
-        }
-
-        const start = dayjs(event.start).startOf("day").add(1, "day");
-        const end = dayjs(event.end).endOf("day").add(1, "day");
-        const country = city ? cityCountryMap[city] : undefined;
-
-        const nameDatePart = `(${start.format("DD-MM-YYYY")} – ${end.format("DD-MM-YYYY")})`;
-        const locationPart = country ? `${city} ${country}` : city ?? "";
-        const name = `${locationPart} ${nameDatePart}`;
-
-        tripName = locationPart;
-        calendarName = name;
-
-        continue;
-      }
-
-      if (event.description?.includes("DEPART")) {
+      if (event.description?.includes("Departure")) {
         const flightDetails = parseFlight(event);
         const summary = getFlightSummary(flightDetails);
         const description = getFlightDescription(flightDetails);
@@ -127,26 +113,29 @@ const getFlightDescription = (flight: FlightDetails): string => {
           description,
           location: getAirportLocation(event),
           categories: [{ name: "TRAVEL" }],
+          url: flightDetails.url,
         });
 
         continue;
       }
 
-      if (event.description?.includes("nights at")) {
-        const stay = parseStay(event);
+      if (event.description?.includes("Hotel information")) {
+        const stayDetails = parseStay(event);
+        const summary = `Stay at ${stayDetails.hotelName}`;
+        const description = getStayDescription(stayDetails);
 
-        const start = dayjs(event.start).startOf("day").add(1, "day");
-        const end = dayjs(event.end).startOf("day").add(1, "day");
-
-        console.log(stay.location);
+        const eventStart = event.start as (Date & { dateOnly?: boolean }) | undefined;
+        const eventEnd = event.end as (Date & { dateOnly?: boolean }) | undefined;
+        const start = dayjs(eventStart);
+        const end = dayjs(eventEnd);
 
         stayEvents.push({
           start: start.toDate(),
           end: end.toDate(),
           allDay: true,
-          location: stay.location,
-          summary: `Stay at ${stay.hotelName}`,
-          description: stay.confirmationNumber ? `Confirmation number: ${stay.confirmationNumber}` : undefined,
+          location: stayDetails.location,
+          summary,
+          description,
         });
 
         continue;
@@ -154,17 +143,16 @@ const getFlightDescription = (flight: FlightDetails): string => {
     }
   }
 
-  const calendar = icalGenerator({ name: calendarName });
+  const { isStayOverride, event: wholeTripEvent, calendarName } = await getWholeTripEvent(flightEvents, stayEvents);
 
+  const calendar = icalGenerator({ name: calendarName });
   flightEvents.forEach((event) => calendar.createEvent(event));
-  const { isStayOverride, event: wholeTripEvent } = getWholeTripEvent(tripName, flightEvents, stayEvents);
   calendar.createEvent(wholeTripEvent);
 
   if (!isStayOverride) {
     stayEvents.forEach((event) => calendar.createEvent(event));
   }
 
-  // console.log(calendar.toJSON().events.map((e) => e.summary));
   const outPath = join(__dirname, "..", "out", "travelperk-trip.ics");
   await calendar.save(outPath);
 })();
